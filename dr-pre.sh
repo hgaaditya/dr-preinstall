@@ -67,9 +67,9 @@ read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
 INSTALL_DIR="/opt/datarobot/DataRobot-${DR_VERSION}"
 
 BINARY_URLS=(
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315196&Signature=djXi84M1ZjN0d%2F9OExW1n3k9uoc%3D"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot_pcs-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=P5O4Raht%2BhTBKSxkyHpv6WgK0hA%3D"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_installer_tools-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=%2FywU4StLwUulehN2GfyNTSgUC1Q%3D"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot-10.2.0-RELEASE.tar"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot_pcs-10.2.0-RELEASE.tar"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_installer_tools-10.2.0-RELEASE.tar"
 )
 
 # Prompt for Container Runtime Selection
