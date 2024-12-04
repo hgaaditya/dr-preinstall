@@ -407,7 +407,7 @@ main() {
     extract_zstd_files
     load_tar_to_container_runtime
     push_images_to_registry
-    log_message "DataRobot installation process completed."
+    log_message "DataRobot Pre-installation setup completed."
 }
 
 # Execute main function with arguments
