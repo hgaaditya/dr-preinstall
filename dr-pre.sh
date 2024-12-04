@@ -381,8 +381,15 @@ module_exists() {
 }
 
 # Updated main function
+# Updated main function
 main() {
-    # Process --only flag
+    # Check for flags
+    PROMPT_MODE=false
+    if [[ "$1" == "--prompt" ]]; then
+        PROMPT_MODE=true
+        shift # Remove the flag from the arguments
+    fi
+
     if [[ "$1" == "--only" ]]; then
         if [[ -z "$2" ]]; then
             list_modules
@@ -398,17 +405,40 @@ main() {
 
     # Default full execution
     log_message "Starting DataRobot pre-install setup for version ${DR_VERSION}..."
-    check_dependencies
-    install_utilities
-    select_container_runtime
-    setup_directories
-    download_binaries
-    extract_binaries
-    extract_zstd_files
-    load_tar_to_container_runtime
-    push_images_to_registry
+
+    for module in "${MODULES[@]}"; do
+        if [[ "$PROMPT_MODE" == true ]]; then
+            # Prompt the user before running each module
+            read -p "Would you like to run $module? (y/n): " user_input
+            case $user_input in
+                [Yy]*)
+                    log_message "Running module: $module"
+                    $module || {
+                        log_message "Error: $module failed. Exiting."
+                        exit 1
+                    }
+                    ;;
+                [Nn]*)
+                    log_message "Skipping module: $module"
+                    continue
+                    ;;
+                *)
+                    log_message "Invalid input. Skipping module: $module"
+                    continue
+                    ;;
+            esac
+        else
+            log_message "Running module: $module"
+            $module || {
+                log_message "Error: $module failed. Exiting."
+                exit 1
+            }
+        fi
+    done
+
     log_message "DataRobot Pre-installation setup completed."
 }
+
 
 # Execute main function with arguments
 main "$@"
