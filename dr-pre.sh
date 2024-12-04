@@ -66,11 +66,6 @@ install_utilities() {
 read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
 INSTALL_DIR="/opt/datarobot/DataRobot-${DR_VERSION}"
 
-BINARY_URLS=(
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315196&Signature=djXi84M1ZjN0d%2F9OExW1n3k9uoc%3D"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot_pcs-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=P5O4Raht%2BhTBKSxkyHpv6WgK0hA%3D"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_installer_tools-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=%2FywU4StLwUulehN2GfyNTSgUC1Q%3D"
-)
 
 # Prompt for Container Runtime Selection
 select_container_runtime() {
@@ -131,6 +126,25 @@ setup_directories() {
             log_message "Created directory $dir_path."
         fi
     done
+}
+
+# Prompt user for binary URLs
+BINARY_URLS=() #Initializinf empty array just in case
+
+initialize_binaries() {
+    log_message "Prompting user to enter binary URLs for installation..."
+    
+    binary_names=("datarobot" "datarobot_pcs" "installer_tools")
+    for binary in "${binary_names[@]}"; do
+        read -p "Enter the download URL for $binary binary: " binary_url
+        if [[ -z "$binary_url" ]]; then
+            log_message "Error: URL for $binary is required. Exiting."
+            exit 1
+        fi
+        BINARY_URLS+=("$binary_url")
+    done
+
+    log_message "Binary URLs initialized successfully."
 }
 
 # Download binaries
@@ -197,6 +211,8 @@ load_tar_to_container_runtime() {
     done
 }
 
+# Global variable to store environment
+ENV_NAME=""
 
 # Retag and Push Images to Container Registry
 push_images_to_registry() {
@@ -213,6 +229,7 @@ push_images_to_registry() {
     case $REGISTRY_CHOICE in
         1)
             # Generic Docker Registry
+            ENV_NAME="generic"
             read -p "Enter the Docker Registry URL (without https://): " DOCKER_REGISTRY_URL
             read -p "Enter the Docker Registry Username: " DOCKER_REGISTRY_USERNAME
             read -sp "Enter the Docker Registry Password: " DOCKER_REGISTRY_PASSWORD
@@ -243,6 +260,7 @@ push_images_to_registry() {
             ;;
         2)
             # AWS ECR
+            ENV_NAME="aws"
             read -p "Enter AWS Region: " AWS_REGION
             read -p "Enter AWS ECR URL (e.g., <AWS_ACCOUNT_ID>.dkr.ecr.$AWS_REGION.amazonaws.com): " AWS_ECR_URL
             aws ecr get-login-password --region "$AWS_REGION" | $CONTAINER_TOOL login --username AWS --password-stdin "$AWS_ECR_URL" || exit 1
@@ -281,6 +299,7 @@ push_images_to_registry() {
             ;;
         3)
             # Azure ACR
+            ENV_NAME="azure"
                 log_message "Starting the process to retag and push images to Azure ACR."
 
                 # Login to Azure
@@ -339,6 +358,7 @@ push_images_to_registry() {
             ;;
         4)
             # Google Artifact Registry (GAR)
+            ENV_NAME="google"
             read -p "Enter GCP Region: " GCP_REGION
             read -p "Enter GCP Project Name: " GCP_PROJECT_NAME
             read -p "Enter GAR Repository Name (e.g., datarobot-dev): " REPO_NAME
@@ -356,33 +376,7 @@ push_images_to_registry() {
 create_helm_values() {
     log_message "Starting the creation of Helm chart values files..."
 
-    # Determine environment
-    echo "Select the environment for deployment:"
-    echo "1. AWS (EKS)"
-    echo "2. GCP (Google Kubernetes Engine)"
-    echo "3. Azure (AKS)"
-    echo "4. OpenShift or Baremetal"
-    read -p "Enter the number corresponding to your environment: " ENV_CHOICE
-
-    case $ENV_CHOICE in
-        1)
-            ENV_NAME="aws"
-            ;;
-        2)
-            ENV_NAME="google"
-            ;;
-        3)
-            ENV_NAME="azure"
-            ;;
-        4)
-            ENV_NAME="generic"
-            ;;
-        *)
-            log_message "Invalid environment choice. Exiting module."
-            return 1
-            ;;
-    esac
-    log_message "Environment selected: $ENV_NAME"
+    log_message "Using environment: $ENV_NAME"
 
     # Prompt for HA/Non-HA deployment
     read -p "Is this a High Availability (HA) deployment? (y/n): " HA_CHOICE
@@ -484,6 +478,7 @@ MODULES=(
     "install_utilities"
     "select_container_runtime"
     "setup_directories"
+    "initialize_binaries"
     "download_binaries"
     "extract_binaries"
     "extract_zstd_files"
