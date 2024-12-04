@@ -221,6 +221,22 @@ push_images_to_registry() {
 
             read -p "Enter the DataRobot Repository name (e.g., datarobot-dev): " REPO_NAME
             FULL_REPO_URL="$DOCKER_REGISTRY_URL/$REPO_NAME"
+
+            log_message "Retagging and pushing images to Docker Registry: $DOCKER_REGISTRY_URL..."
+            for i in $($CONTAINER_TOOL images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry' | grep -v "$DOCKER_REGISTRY_URL"); do
+                NEW_REPO="$DOCKER_REGISTRY_URL/$(echo $i | cut -d/ -f2-)"
+                log_message "Retagging $i as $NEW_REPO"
+                $CONTAINER_TOOL tag "$i" "$NEW_REPO" || {
+                    log_message "Error: Failed to retag $i. Skipping."
+                    continue
+                }
+                log_message "Pushing $NEW_REPO..."
+                $CONTAINER_TOOL push "$NEW_REPO" || {
+                    log_message "Error: Failed to push $NEW_REPO. Skipping."
+                    continue
+                }
+            done
+            log_message "Retag and push process to Docker Registry completed successfully."
             ;;
         2)
             # AWS ECR
