@@ -67,9 +67,9 @@ read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
 INSTALL_DIR="/opt/datarobot/DataRobot-${DR_VERSION}"
 
 BINARY_URLS=(
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot-10.2.0-RELEASE.tar"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot_pcs-10.2.0-RELEASE.tar"
-    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_installer_tools-10.2.0-RELEASE.tar"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315196&Signature=djXi84M1ZjN0d%2F9OExW1n3k9uoc%3D"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_datarobot_pcs-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=P5O4Raht%2BhTBKSxkyHpv6WgK0hA%3D"
+    "https://datarobot-enterprise-releases.s3.amazonaws.com/promoted/10.2.0/DataRobot-tarball_installer_tools-10.2.0-RELEASE.tar?AWSAccessKeyId=AKIAQ6I23A22HKHMV2MB&Expires=1733315197&Signature=%2FywU4StLwUulehN2GfyNTSgUC1Q%3D"
 )
 
 # Prompt for Container Runtime Selection
@@ -155,7 +155,7 @@ extract_binaries() {
     for dir in "datarobot" "datarobot_pcs" "installer_tools"; do
         local tar_file=$(find "${INSTALL_DIR}/${dir}" -type f -name "*.tar")
         if [[ -f "$tar_file" ]]; then
-            local extraction_dir="${INSTALL_DIR}/${dir}/extracted"
+            local extraction_dir="${INSTALL_DIR}/${dir}"
             if [[ -d "$extraction_dir" ]]; then
                 log_message "Directory $extraction_dir already exists. Skipping extraction."
             else
@@ -173,7 +173,7 @@ extract_binaries() {
 extract_zstd_files() {
     log_message "Finding and extracting .zstd files in datarobot and datarobot_pcs images directories..."
     for subdir in "datarobot" "datarobot_pcs"; do
-        local images_dir="${INSTALL_DIR}/${subdir}/extracted/images"
+        local images_dir="${INSTALL_DIR}/${subdir}/images"
         if [[ -d "$images_dir" ]]; then
             find "$images_dir" -type f -name "*.zst" -exec zstd -d --long=30 {} \; || exit 1
         else
@@ -187,7 +187,7 @@ extract_zstd_files() {
 load_tar_to_container_runtime() {
     log_message "Loading .tar files into container runtime..."
     for subdir in "datarobot" "datarobot_pcs"; do
-        local images_dir="${INSTALL_DIR}/${subdir}/extracted/images"
+        local images_dir="${INSTALL_DIR}/${subdir}/images"
         if [[ -d "$images_dir" ]]; then
             find "$images_dir" -type f -name "*.tar" -exec $CONTAINER_TOOL load -i {} \; || exit 1
             log_message "Loaded .tar files from $images_dir into $CONTAINER_TOOL."
@@ -221,22 +221,6 @@ push_images_to_registry() {
 
             read -p "Enter the DataRobot Repository name (e.g., datarobot-dev): " REPO_NAME
             FULL_REPO_URL="$DOCKER_REGISTRY_URL/$REPO_NAME"
-
-            log_message "Retagging and pushing images to Docker Registry: $DOCKER_REGISTRY_URL..."
-            for i in $($CONTAINER_TOOL images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry' | grep -v "$DOCKER_REGISTRY_URL"); do
-                NEW_REPO="$DOCKER_REGISTRY_URL/$(echo $i | cut -d/ -f2-)"
-                log_message "Retagging $i as $NEW_REPO"
-                $CONTAINER_TOOL tag "$i" "$NEW_REPO" || {
-                    log_message "Error: Failed to retag $i. Skipping."
-                    continue
-                }
-                log_message "Pushing $NEW_REPO..."
-                $CONTAINER_TOOL push "$NEW_REPO" || {
-                    log_message "Error: Failed to push $NEW_REPO. Skipping."
-                    continue
-                }
-            done
-            log_message "Retag and push process to Docker Registry completed successfully."
             ;;
         2)
             # AWS ECR
@@ -350,6 +334,132 @@ push_images_to_registry() {
     log_message "Retag and push process completed successfully."
 }
 
+create_helm_values() {
+    log_message "Starting the creation of Helm chart values files..."
+
+    # Determine environment
+    echo "Select the environment for deployment:"
+    echo "1. AWS (EKS)"
+    echo "2. GCP (Google Kubernetes Engine)"
+    echo "3. Azure (AKS)"
+    echo "4. OpenShift or Baremetal"
+    read -p "Enter the number corresponding to your environment: " ENV_CHOICE
+
+    case $ENV_CHOICE in
+        1)
+            ENV_NAME="aws"
+            ;;
+        2)
+            ENV_NAME="google"
+            ;;
+        3)
+            ENV_NAME="azure"
+            ;;
+        4)
+            ENV_NAME="generic"
+            ;;
+        *)
+            log_message "Invalid environment choice. Exiting module."
+            return 1
+            ;;
+    esac
+    log_message "Environment selected: $ENV_NAME"
+
+    # Prompt for HA/Non-HA deployment
+    read -p "Is this a High Availability (HA) deployment? (y/n): " HA_CHOICE
+    case $HA_CHOICE in
+        [Yy]*)
+            HA_MODE="ha"
+            ;;
+        [Nn]*)
+            HA_MODE="non-ha"
+            ;;
+        *)
+            log_message "Invalid HA/Non-HA choice. Defaulting to Non-HA."
+            HA_MODE="non-ha"
+            ;;
+    esac
+    log_message "Deployment mode selected: $HA_MODE"
+
+    # Locate example values files directory
+    EXAMPLES_DIR="${INSTALL_DIR}/installer_tools/example_umbrella_chart_values"
+    if [[ ! -d "$EXAMPLES_DIR" ]]; then
+        log_message "Error: Example values directory not found: $EXAMPLES_DIR"
+        return 1
+    fi
+
+    # 1. Copy environment-based values file
+    MATCHING_FILES=($(ls "$EXAMPLES_DIR" | grep "$ENV_NAME"))
+    if [[ ${#MATCHING_FILES[@]} -eq 0 ]]; then
+        log_message "Error: No values files found for environment: $ENV_NAME"
+        return 1
+    fi
+
+    echo "Select the values file for the environment:"
+    for i in "${!MATCHING_FILES[@]}"; do
+        echo "$((i+1)). ${MATCHING_FILES[$i]}"
+    done
+
+    read -p "Enter the number corresponding to your choice: " FILE_CHOICE
+    if [[ $FILE_CHOICE -lt 1 || $FILE_CHOICE -gt ${#MATCHING_FILES[@]} ]]; then
+        log_message "Invalid choice. Exiting module."
+        return 1
+    fi
+
+    SELECTED_FILE="${MATCHING_FILES[$((FILE_CHOICE-1))]}"
+    log_message "Selected environment-based file: $SELECTED_FILE"
+    cp "$EXAMPLES_DIR/$SELECTED_FILE" "${INSTALL_DIR}/values.yaml" || {
+        log_message "Error: Failed to copy the environment-based file."
+        return 1
+    }
+    log_message "Environment-based Helm values file created successfully: ${INSTALL_DIR}/values.yaml"
+
+    # 2. Copy PCS-specific values file
+    PCS_MATCHING_FILES=($(ls "$EXAMPLES_DIR" | grep "pcs"))
+    if [[ ${#PCS_MATCHING_FILES[@]} -eq 0 ]]; then
+        log_message "Error: No PCS values files found."
+        return 1
+    fi
+
+    echo "Select the PCS-specific values file to use:"
+    for i in "${!PCS_MATCHING_FILES[@]}"; do
+        echo "$((i+1)). ${PCS_MATCHING_FILES[$i]}"
+    done
+
+    read -p "Enter the number corresponding to your choice: " PCS_FILE_CHOICE
+    if [[ $PCS_FILE_CHOICE -lt 1 || $PCS_FILE_CHOICE -gt ${#PCS_MATCHING_FILES[@]} ]]; then
+        log_message "Invalid choice. Exiting module."
+        return 1
+    fi
+
+    SELECTED_PCS_FILE="${PCS_MATCHING_FILES[$((PCS_FILE_CHOICE-1))]}"
+    log_message "Selected PCS-specific file: $SELECTED_PCS_FILE"
+    cp "$EXAMPLES_DIR/$SELECTED_PCS_FILE" "${INSTALL_DIR}/pcs-values.yaml" || {
+        log_message "Error: Failed to copy the PCS-specific file."
+        return 1
+    }
+    log_message "PCS-specific Helm values file created successfully: ${INSTALL_DIR}/pcs-values.yaml"
+
+    # 3. Copy small_pcs.yaml if Non-HA
+    if [[ "$HA_MODE" == "non-ha" ]]; then
+        SMALL_PCS_FILE="${INSTALL_DIR}/installer_tools/example_tshirt_size_values/small_pcs.yaml"
+        if [[ -f "$SMALL_PCS_FILE" ]]; then
+            cp "$SMALL_PCS_FILE" "${INSTALL_DIR}/small_pcs.yaml" || {
+                log_message "Error: Failed to copy small_pcs.yaml."
+                return 1
+            }
+            log_message "Non-HA deployment: small_pcs.yaml copied to ${INSTALL_DIR}/small_pcs.yaml"
+        else
+            log_message "Error: small_pcs.yaml file not found in example_tshirt_size_values."
+            return 1
+        fi
+    else
+        log_message "HA deployment: Skipping small_pcs.yaml copy."
+    fi
+}
+
+
+
 MODULES=(
     "check_dependencies"
     "install_utilities"
@@ -360,6 +470,7 @@ MODULES=(
     "extract_zstd_files"
     "load_tar_to_container_runtime"
     "push_images_to_registry"
+    "create_helm_values"
 )
 
 # Helper functions
@@ -380,7 +491,6 @@ module_exists() {
     return 1
 }
 
-# Updated main function
 # Updated main function
 main() {
     # Check for flags
@@ -438,7 +548,6 @@ main() {
 
     log_message "DataRobot Pre-installation setup completed."
 }
-
 
 # Execute main function with arguments
 main "$@"
