@@ -13,6 +13,9 @@ log_message() {
     echo "$(date): $1" | tee -a $LOG_FILE
 }
 
+# Global Variables
+CONTAINER_TOOL="docker"  # Default container tool, will be updated by select_container_runtime.
+
 # Check dependencies
 check_dependencies() {
     log_message "Checking dependencies..."
@@ -73,7 +76,8 @@ select_container_runtime() {
     echo "Choose the container runtime:"
     echo "1. Docker"
     echo "2. Podman"
-    read -p "Enter your choice (1 or 2): " runtime_choice
+    echo "3. Sudo Docker"
+    read -p "Enter your choice (1, 2, or 3): " runtime_choice
     case $runtime_choice in
         1)
             CONTAINER_TOOL="docker"
@@ -89,6 +93,15 @@ select_container_runtime() {
             CONTAINER_TOOL="podman"
             log_message "Selected container runtime: Podman"
             ;;
+        3)
+            CONTAINER_TOOL="sudo docker"
+            log_message "Selected container runtime: Sudo Docker"
+            # Ensure Docker service is running
+            sudo systemctl start docker || {
+                log_message "Error: Failed to start Docker service."
+                exit 1
+            }
+            ;;
         *)
             log_message "Invalid choice. Defaulting to Docker."
             CONTAINER_TOOL="docker"
@@ -100,6 +113,7 @@ select_container_runtime() {
             }
             ;;
     esac
+    log_message "Using container tool: $CONTAINER_TOOL"
 }
 
 
@@ -270,7 +284,7 @@ push_images_to_registry() {
 
             log_message "Checking and creating repositories in ECR if necessary..."
             # Create repositories dynamically if they do not exist
-            for i in $(docker images --format '{{.Repository}}' | grep -v 'registry' | grep -v '.dkr.ecr.');
+            for i in $($CONTAINER_TOOL images --format '{{.Repository}}' | grep -v 'registry' | grep -v '.dkr.ecr.');
                 do
                     NEW_REPO=${AWS_ECR_REPO}/$(echo $i)
                     echo $NEW_REPO
@@ -287,12 +301,12 @@ push_images_to_registry() {
                 done
 
             log_message "Retagging and pushing images to ECR..."
-            for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry' | grep -v '.dkr.ecr.');
+            for i in $($CONTAINER_TOOL images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry' | grep -v '.dkr.ecr.');
               do
                 NEW_REPO=${FULL_REPO_URL}/$(echo $i);
                 echo $NEW_REPO
-                docker tag $i $NEW_REPO
-                docker push $NEW_REPO
+                $CONTAINER_TOOL tag $i $NEW_REPO
+                $CONTAINER_TOOL push $NEW_REPO
             done
 
             log_message "Retag and push process to AWS ECR completed successfully."
@@ -328,7 +342,7 @@ push_images_to_registry() {
 
                 # Docker login to ACR
                 log_message "Logging into ACR using Docker..."
-                docker login "$AZ_ACR_URL" -u "00000000-0000-0000-0000-000000000000" -p "$AZ_ACR_LOGIN_TOKEN" || {
+                $CONTAINER_TOOL login "$AZ_ACR_URL" -u "00000000-0000-0000-0000-000000000000" -p "$AZ_ACR_LOGIN_TOKEN" || {
                     log_message "Error: Failed to log into Azure ACR with Docker."
                     exit 1
                 }
@@ -339,16 +353,16 @@ push_images_to_registry() {
 
                 # Retag and push images
                 log_message "Retagging and pushing images to Azure ACR..."
-                for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry'); do
+                for i in $($CONTAINER_TOOL images --format '{{.Repository}}:{{.Tag}}' | grep -v 'registry'); do
                     NEW_REPO="${FULL_ACR_URL}/$(echo $i)"
                     log_message "Retagging $i as $NEW_REPO"
-                    docker tag "$i" "$NEW_REPO" || {
+                    $CONTAINER_TOOL tag "$i" "$NEW_REPO" || {
                         log_message "Error: Failed to retag $i. Skipping."
                         continue
                     }
 
                     log_message "Pushing $NEW_REPO"
-                    docker push "$NEW_REPO" || {
+                    $CONTAINER_TOOL push "$NEW_REPO" || {
                         log_message "Error: Failed to push $NEW_REPO. Skipping."
                         continue
                     }
