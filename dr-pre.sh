@@ -67,7 +67,24 @@ install_utilities() {
 
 # Input Variables
 read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
-INSTALL_DIR="/opt/datarobot/DataRobot-${DR_VERSION}"
+
+# Prompt for parent directory
+read -p "Enter the parent directory for installation [default: /opt/datarobot]: " PARENT_DIR
+PARENT_DIR="${PARENT_DIR:-/opt/datarobot}"  # Default to /opt/datarobot if no input is provided
+
+# Construct the full installation directory path
+INSTALL_DIR="${PARENT_DIR}/DataRobot-${DR_VERSION}"
+
+# Log the installation directory
+log_message "Installation directory set to: $INSTALL_DIR"
+
+# Ensure the directory exists
+mkdir -p "$INSTALL_DIR" || {
+    log_message "Error: Failed to create installation directory: $INSTALL_DIR"
+    exit 1
+}
+
+
 
 
 # Prompt for Container Runtime Selection
