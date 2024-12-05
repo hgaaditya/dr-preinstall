@@ -22,10 +22,9 @@ check_dependencies() {
     for cmd in wget tar zstd jq; do
         if ! command -v $cmd &> /dev/null; then
             log_message "Error: $cmd is not installed. Please install it before running this script."
-            exit 1
         fi
     done
-    log_message "All required dependencies are installed."
+    #log_message "All required dependencies are installed."
 }
 
 
