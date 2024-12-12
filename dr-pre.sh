@@ -201,7 +201,8 @@ extract_binaries() {
         if [[ -f "$tar_file" ]]; then
             local extraction_dir="${INSTALL_DIR}/${dir}"
             if [[ -d "$extraction_dir" ]]; then
-                log_message "Directory $extraction_dir already exists. Skipping extraction."
+                log_message "Directory $extraction_dir already exists."
+                tar -xvf "$tar_file" -C "$extraction_dir"
             else
                 mkdir -p "$extraction_dir"
                 tar -xvf "$tar_file" -C "$extraction_dir" >> $LOG_FILE || exit 1
