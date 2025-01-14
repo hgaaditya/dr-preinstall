@@ -16,6 +16,54 @@ log_message() {
 # Global Variables
 CONTAINER_TOOL="docker"  # Default container tool, will be updated by select_container_runtime.
 
+load_state() {
+    local state_file="./dr-pre.state"
+
+    if [[ -f "$state_file" ]]; then
+        log_message "Found a previous state file: $state_file"
+        echo "Would you like to continue from the saved state or start a fresh run?"
+        echo "1. Continue from saved state"
+        echo "2. Start a fresh run"
+        read -p "Enter your choice (1 or 2): " choice
+
+        case "$choice" in
+            1)
+                log_message "Loading saved state..."
+                # Load the state variables into the current shell
+                source "$state_file"
+                ;;
+            2)
+                log_message "Starting a fresh run. Clearing saved state..."
+                rm -f "$state_file"
+                ;;
+            *)
+                log_message "Invalid choice. Exiting."
+                exit 1
+                ;;
+        esac
+    else
+        log_message "No previous state file found. Starting a fresh run..."
+    fi
+}
+
+save_state() {
+    local state_file="./dr-pre.state"
+
+    log_message "Saving current state to $state_file..."
+
+    # Save the key variables to the state file
+    {
+        echo "DR_VERSION=$DR_VERSION"
+        echo "PARENT_DIR=$PARENT_DIR"
+        echo "INSTALL_DIR=$INSTALL_DIR"
+        echo "CONTAINER_TOOL=$CONTAINER_TOOL"
+    } > "$state_file"
+
+    log_message "State saved successfully."
+}
+
+
+
 # Check dependencies
 check_dependencies() {
     log_message "Checking dependencies..."
@@ -67,14 +115,24 @@ install_utilities() {
 prompt_user_inputs() {
     log_message "Prompting user for DataRobot version and installation directory..."
 
-    # Prompt for DataRobot version
-    read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
+    # Prompt for DataRobot version (use saved value if available)
+    if [[ -n "$DR_VERSION" ]]; then
+        read -p "Enter DataRobot version (currently: $DR_VERSION): " input
+        DR_VERSION="${input:-$DR_VERSION}"
+    else
+        read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
+    fi
 
-    # Prompt for the parent directory (default to /opt/datarobot if not provided)
-    read -p "Enter the parent directory for installation [default: /opt/datarobot]: " PARENT_DIR
-    PARENT_DIR="${PARENT_DIR:-/opt/datarobot}"
+    # Prompt for the parent directory (use saved value if available)
+    if [[ -n "$PARENT_DIR" ]]; then
+        read -p "Enter the parent directory for installation (currently: $PARENT_DIR): " input
+        PARENT_DIR="${input:-$PARENT_DIR}"
+    else
+        read -p "Enter the parent directory for installation [default: /opt/datarobot]: " PARENT_DIR
+        PARENT_DIR="${PARENT_DIR:-/opt/datarobot}"
+    fi
 
-    log_message "User inputs collected: DataRobot version = $DR_VERSION, Parent directory = $PARENT_DIR"
+    save_state
 }
 
 
@@ -590,90 +648,77 @@ module_exists() {
 }
 
 main() {
-    if [[ $# -eq 0 ]]; then
-        # No flags provided, show usage instructions and available modules
-        echo "Usage: ./dr-pre.sh [OPTION]"
-        echo "Options:"
-        echo "  --prompt           Prompt y/n before running each step"
-        echo "  --all              Run all modules in sequence without prompting"
-        echo "  --only MODULE      Run a specific module"
-        echo ""
-        echo "Available Modules                           Commnand"
-        echo "--------------------------------||-------------------------------"
+    # Load state from the state file if it exists
+    load_state
+
+    if [[ "$1" == "--prompt" ]]; then
+        log_message "Running in interactive prompt mode..."
         for module in "${MODULES[@]}"; do
-            printf "  - %-30s ./dr-pre.sh --only %s\n" "$module" "$module"
+            read -p "Would you like to run $module? (y/n): " user_input
+            case $user_input in
+                [Yy]*)
+                    log_message "Running module: $module"
+                    $module || {
+                        log_message "Error: $module failed. Exiting."
+                        exit 1
+                    }
+                    save_state
+                    ;;
+                [Nn]*)
+                    log_message "Skipping module: $module"
+                    continue
+                    ;;
+                *)
+                    log_message "Invalid input. Skipping module: $module"
+                    continue
+                    ;;
+            esac
         done
-        exit 0
-    fi
-
-    case "$1" in
-        --prompt)
-            log_message "Running in interactive prompt mode..."
-            for module in "${MODULES[@]}"; do
-                read -p "Would you like to run $module? (y/n): " user_input
-                case $user_input in
-                    [Yy]*)
-                        log_message "Running module: $module"
-                        $module || {
-                            log_message "Error: $module failed. Exiting."
-                            exit 1
-                        }
-                        ;;
-                    [Nn]*)
-                        log_message "Skipping module: $module"
-                        continue
-                        ;;
-                    *)
-                        log_message "Invalid input. Skipping module: $module"
-                        continue
-                        ;;
-                esac
-            done
-            ;;
-        --all)
-            log_message "Running all modules in sequence..."
-            for module in "${MODULES[@]}"; do
-                log_message "Running module: $module"
-                $module || {
-                    log_message "Error: $module failed. Exiting."
-                    exit 1
-                }
-            done
-            ;;
-        --only)
-            if [[ -z "$2" ]]; then
-                echo "Error: Please specify a module to run with the --only flag."
+    elif [[ "$1" == "--all" ]]; then
+        log_message "Running all modules in sequence..."
+        for module in "${MODULES[@]}"; do
+            log_message "Running module: $module"
+            $module || {
+                log_message "Error: $module failed. Exiting."
                 exit 1
-            fi
+            }
+            save_state
+        done
+    elif [[ "$1" == "--only" ]]; then
+        if [[ -z "$2" ]]; then
+            echo "Error: Please specify a module to run with the --only flag."
+            exit 1
+        fi
 
-            local target_module="$2"
-            if [[ " ${MODULES[*]} " == *" $target_module "* ]]; then
-                log_message "Running module: $target_module"
-                $target_module || {
-                    log_message "Error: $target_module failed. Exiting."
-                    exit 1
-                }
-            else
-                echo "Error: Invalid module name '$target_module'."
-                echo ""
-                echo "Available Modules:"
-                for module in "${MODULES[@]}"; do
-                    printf "  - %-25s ./dr-pre.sh --only %s\n" "$module" "$module"
-                done
+        local target_module="$2"
+        if [[ " ${MODULES[*]} " == *" $target_module "* ]]; then
+            log_message "Running module: $target_module"
+            $target_module || {
+                log_message "Error: $target_module failed. Exiting."
                 exit 1
-            fi
-            ;;
-        *)
-            echo "Error: Unknown option '$1'"
-            echo "Usage: ./dr-pre.sh [--prompt | --all | --only MODULE]"
+            }
+            save_state
+        else
+            echo "Error: Invalid module name '$target_module'."
             echo ""
             echo "Available Modules:"
             for module in "${MODULES[@]}"; do
                 printf "  - %-25s ./dr-pre.sh --only %s\n" "$module" "$module"
             done
             exit 1
-            ;;
-    esac
+        fi
+    else
+        echo "Error: Unknown option '$1'"
+        echo "Usage: ./dr-pre.sh [--prompt | --all | --only MODULE]"
+        echo ""
+        echo "|--------------------------------------|----------------------------------------------------|"        
+        echo "|      Available Modules               |                          Command                   |"
+        echo "|--------------------------------------|----------------------------------------------------|"
+        for module in "${MODULES[@]}"; do
+            printf "  - %-40s ./dr-pre.sh --only %s\n" "$module" "$module"
+        done
+        exit 1
+    fi
 
     log_message "DataRobot Pre-installation setup completed."
 }
