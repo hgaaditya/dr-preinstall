@@ -64,23 +64,36 @@ install_utilities() {
 }
 
 
-# Input Variables
-read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
+prompt_user_inputs() {
+    log_message "Prompting user for DataRobot version and installation directory..."
 
-# Prompt for parent directory
-read -p "Enter the parent directory for installation [default: /opt/datarobot]: " PARENT_DIR
-PARENT_DIR="${PARENT_DIR:-/opt/datarobot}"  # Default to /opt/datarobot if no input is provided
+    # Prompt for DataRobot version
+    read -p "Enter DataRobot version (e.g., 10.1.0): " DR_VERSION
 
-# Construct the full installation directory path
-INSTALL_DIR="${PARENT_DIR}/DataRobot-${DR_VERSION}"
+    # Prompt for the parent directory (default to /opt/datarobot if not provided)
+    read -p "Enter the parent directory for installation [default: /opt/datarobot]: " PARENT_DIR
+    PARENT_DIR="${PARENT_DIR:-/opt/datarobot}"
 
-# Log the installation directory
-log_message "Installation directory set to: $INSTALL_DIR"
+    log_message "User inputs collected: DataRobot version = $DR_VERSION, Parent directory = $PARENT_DIR"
+}
 
-# Ensure the directory exists
-mkdir -p "$INSTALL_DIR" || {
-    log_message "Error: Failed to create installation directory: $INSTALL_DIR"
-    exit 1
+
+prepare_install_directory() {
+    log_message "Preparing installation directory..."
+
+    # Construct the full installation directory path
+    INSTALL_DIR="${PARENT_DIR}/DataRobot-${DR_VERSION}"
+
+    # Log the installation directory
+    log_message "Installation directory set to: $INSTALL_DIR"
+
+    # Ensure the directory exists
+    mkdir -p "$INSTALL_DIR" || {
+        log_message "Error: Failed to create installation directory: $INSTALL_DIR"
+        exit 1
+    }
+
+    log_message "Installation directory created successfully: $INSTALL_DIR"
 }
 
 
@@ -502,9 +515,48 @@ create_helm_values() {
     fi
 }
 
+# Module to populate Helm values file with actual values
+populate_helm_values() {
+    log_message "Populating Helm values file with actual values..."
+
+    # Path to the template file
+    local template_file="${INSTALL_DIR}/values.yaml"
+    if [[ ! -f "$template_file" ]]; then
+        log_message "Error: Template values file not found at $template_file"
+        exit 1
+    fi
+
+    # Find all placeholders in the file (uppercase inside quotes or unquoted following a colon and space)
+    local lines_with_placeholders
+    lines_with_placeholders=$(grep -oP '.*: "?[A-Z0-9_]+"?' "$template_file")
+
+    # Iterate over each line with a placeholder
+    while IFS= read -r line; do
+        # Extract the key (before the colon) and the placeholder value
+        local key placeholder
+        key=$(echo "$line" | awk -F: '{print $1}' | xargs)
+        placeholder=$(echo "$line" | grep -oP '(?<=: )"?[A-Z0-9_]+"?' | tr -d '"')
+
+        # Check if an environment variable exists for this placeholder
+        local value="${!placeholder}"
+        if [[ -z "$value" ]]; then
+            # Prompt user with the relevant key and current placeholder value
+            read -p "Enter value for '$key' (currently: $placeholder): " value
+        fi
+
+        # Replace the placeholder with the value in the template
+        sed -i "s|\"$placeholder\"|\"$value\"|g" "$template_file"
+        sed -i "s|$placeholder|$value|g" "$template_file"
+    done <<< "$lines_with_placeholders"
+
+    log_message "Helm values file populated successfully: $template_file"
+}
+
 
 
 MODULES=(
+    "prompt_user_inputs"
+    "prepare_install_directory"
     "check_dependencies"
     "install_utilities"
     "select_container_runtime"
@@ -516,6 +568,7 @@ MODULES=(
     "load_tar_to_container_runtime"
     "push_images_to_registry"
     "create_helm_values"
+    "populate_helm_values"
 )
 
 # Helper functions
@@ -536,63 +589,95 @@ module_exists() {
     return 1
 }
 
-# Updated main function
 main() {
-    # Check for flags
-    PROMPT_MODE=false
-    if [[ "$1" == "--prompt" ]]; then
-        PROMPT_MODE=true
-        shift # Remove the flag from the arguments
+    if [[ $# -eq 0 ]]; then
+        # No flags provided, show usage instructions and available modules
+        echo "Usage: ./dr-pre.sh [OPTION]"
+        echo "Options:"
+        echo "  --prompt           Prompt y/n before running each step"
+        echo "  --all              Run all modules in sequence without prompting"
+        echo "  --only MODULE      Run a specific module"
+        echo ""
+        echo "Available Modules                           Commnand"
+        echo "--------------------------------||-------------------------------"
+        for module in "${MODULES[@]}"; do
+            printf "  - %-30s ./dr-pre.sh --only %s\n" "$module" "$module"
+        done
+        exit 0
     fi
 
-    if [[ "$1" == "--only" ]]; then
-        if [[ -z "$2" ]]; then
-            list_modules
-        elif module_exists "$2"; then
-            log_message "Running module: $2"
-            $2
-            exit 0
-        else
-            log_message "Error: Invalid module name '$2'."
-            list_modules
-        fi
-    fi
-
-    # Default full execution
-    log_message "Starting DataRobot pre-install setup for version ${DR_VERSION}..."
-
-    for module in "${MODULES[@]}"; do
-        if [[ "$PROMPT_MODE" == true ]]; then
-            # Prompt the user before running each module
-            read -p "Would you like to run $module? (y/n): " user_input
-            case $user_input in
-                [Yy]*)
-                    log_message "Running module: $module"
-                    $module || {
-                        log_message "Error: $module failed. Exiting."
-                        exit 1
-                    }
-                    ;;
-                [Nn]*)
-                    log_message "Skipping module: $module"
-                    continue
-                    ;;
-                *)
-                    log_message "Invalid input. Skipping module: $module"
-                    continue
-                    ;;
-            esac
-        else
-            log_message "Running module: $module"
-            $module || {
-                log_message "Error: $module failed. Exiting."
+    case "$1" in
+        --prompt)
+            log_message "Running in interactive prompt mode..."
+            for module in "${MODULES[@]}"; do
+                read -p "Would you like to run $module? (y/n): " user_input
+                case $user_input in
+                    [Yy]*)
+                        log_message "Running module: $module"
+                        $module || {
+                            log_message "Error: $module failed. Exiting."
+                            exit 1
+                        }
+                        ;;
+                    [Nn]*)
+                        log_message "Skipping module: $module"
+                        continue
+                        ;;
+                    *)
+                        log_message "Invalid input. Skipping module: $module"
+                        continue
+                        ;;
+                esac
+            done
+            ;;
+        --all)
+            log_message "Running all modules in sequence..."
+            for module in "${MODULES[@]}"; do
+                log_message "Running module: $module"
+                $module || {
+                    log_message "Error: $module failed. Exiting."
+                    exit 1
+                }
+            done
+            ;;
+        --only)
+            if [[ -z "$2" ]]; then
+                echo "Error: Please specify a module to run with the --only flag."
                 exit 1
-            }
-        fi
-    done
+            fi
+
+            local target_module="$2"
+            if [[ " ${MODULES[*]} " == *" $target_module "* ]]; then
+                log_message "Running module: $target_module"
+                $target_module || {
+                    log_message "Error: $target_module failed. Exiting."
+                    exit 1
+                }
+            else
+                echo "Error: Invalid module name '$target_module'."
+                echo ""
+                echo "Available Modules:"
+                for module in "${MODULES[@]}"; do
+                    printf "  - %-25s ./dr-pre.sh --only %s\n" "$module" "$module"
+                done
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Error: Unknown option '$1'"
+            echo "Usage: ./dr-pre.sh [--prompt | --all | --only MODULE]"
+            echo ""
+            echo "Available Modules:"
+            for module in "${MODULES[@]}"; do
+                printf "  - %-25s ./dr-pre.sh --only %s\n" "$module" "$module"
+            done
+            exit 1
+            ;;
+    esac
 
     log_message "DataRobot Pre-installation setup completed."
 }
+
 
 # Execute main function with arguments
 main "$@"
